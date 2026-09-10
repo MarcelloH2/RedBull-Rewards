@@ -1,7 +1,4 @@
 import streamlit as st
-import qrcode
-from io import BytesIO
-import streamlit as st
 
 # =========================
 # CONFIGURAÇÃO DA PÁGINA
@@ -14,43 +11,38 @@ st.set_page_config(
 )
 
 # =========================
-# ESTILO DA INTERFACE
+# ESTILO
 # =========================
 
 st.markdown("""
 <style>
-    .stApp {
-        background-color: #f5f5f5;
-    }
 
-    .titulo {
-        text-align: center;
-        font-size: 42px;
-        font-weight: bold;
-        color: #cc0000;
-        margin-top: 40px;
-        margin-bottom: 10px;
-    }
+.stApp {
+    background-color: #f5f5f5;
+}
 
-    .subtitulo {
-        text-align: center;
-        font-size: 20px;
-        color: #555;
-        margin-bottom: 30px;
-    }
+.titulo {
+    text-align: center;
+    font-size: 42px;
+    font-weight: bold;
+    color: #cc0000;
+    margin-top: 40px;
+    margin-bottom: 10px;
+}
 
-    .instrucao {
-        text-align: center;
-        font-size: 18px;
-        color: #555;
-        margin-top: 20px;
-    }
+.subtitulo {
+    text-align: center;
+    font-size: 20px;
+    color: #555;
+    margin-bottom: 30px;
+}
 
-    .usuario {
-        text-align: center;
-        font-size: 18px;
-        margin-bottom: 20px;
-    }
+.usuario {
+    text-align: center;
+    font-size: 18px;
+    margin-bottom: 20px;
+}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -67,7 +59,7 @@ if not st.user.is_logged_in:
 
     st.markdown(
         '<div class="subtitulo">'
-        'Entre para começar a acumular pontos'
+        'Entre para começar a acumular pontos!'
         '</div>',
         unsafe_allow_html=True
     )
@@ -84,7 +76,7 @@ if not st.user.is_logged_in:
 
 
 # =========================
-# USUÁRIO LOGADO
+# USUÁRIO AUTENTICADO
 # =========================
 
 st.markdown(
@@ -94,27 +86,43 @@ st.markdown(
 
 st.markdown(
     '<div class="subtitulo">'
-    'Recicle sua latinha e acumule pontos!'
+    'Recicle suas latinhas e acumule pontos!'
     '</div>',
     unsafe_allow_html=True
 )
 
-# Nome do usuário
-nome_usuario = st.user.get("name", "Usuário")
-email_usuario = st.user.get("email", "")
+nome = st.user.get("name", "Usuário")
+email = st.user.get("email", "")
 
 st.markdown(
     f"""
     <div class="usuario">
-        👋 Olá, <b>{nome_usuario}</b><br>
-        {email_usuario}
+        👋 Olá, <b>{nome}</b><br>
+        {email}
     </div>
     """,
     unsafe_allow_html=True
 )
 
 # =========================
-# BOTÃO DE SAIR
+# PONTOS - TESTE
+# =========================
+
+st.divider()
+
+st.metric(
+    label="⭐ Seus pontos",
+    value="0"
+)
+
+st.info(
+    "🥤 Recicle sua primeira latinha para começar a ganhar pontos!"
+)
+
+st.divider()
+
+# =========================
+# LOGOUT
 # =========================
 
 if st.button(
@@ -122,48 +130,3 @@ if st.button(
     use_container_width=True
 ):
     st.logout()
-
-st.divider()
-
-# =========================
-# QR CODE
-# =========================
-
-link_login = "https://ecofluxobr-dd73ey4nolbw2ecfktumzi.streamlit.app/"
-
-qr = qrcode.QRCode(
-    version=1,
-    box_size=10,
-    border=4
-)
-
-qr.add_data(link_login)
-qr.make(fit=True)
-
-imagem_qr = qr.make_image()
-
-buffer = BytesIO()
-imagem_qr.save(buffer, format="PNG")
-
-# =========================
-# QR CODE CENTRALIZADO
-# =========================
-
-col_esquerda, col_centro, col_direita = st.columns([1, 2, 1])
-
-with col_centro:
-    st.image(
-        buffer.getvalue(),
-        width=300
-    )
-
-# =========================
-# INSTRUÇÃO
-# =========================
-
-st.markdown(
-    '<div class="instrucao">'
-    '📱 Escaneie o QR Code para começar'
-    '</div>',
-    unsafe_allow_html=True
-)
