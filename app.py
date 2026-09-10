@@ -1,6 +1,8 @@
 import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, firestore
+from google import genai
+from google.genai import types
 
 
 # =========================
@@ -56,27 +58,120 @@ st.markdown("""
 # =========================
 
 if not firebase_admin._apps:
-    firebase_config = dict(st.secrets["firebase"])
 
-    cred = credentials.Certificate(firebase_config)
+    firebase_config = dict(
+        st.secrets["firebase"]
+    )
 
-    firebase_admin.initialize_app(cred)
+    cred = credentials.Certificate(
+        firebase_config
+    )
+
+    firebase_admin.initialize_app(
+        cred
+    )
 
 db = firestore.client()
 
 
 # =========================
-# FUNÇÃO PARA REGISTRAR LATINHA
+# GEMINI
 # =========================
 
-def registrar_latinha(email, pontos_por_latinha=10):
+gemini_client = genai.Client(
+    api_key=st.secrets["gemini"]["api_key"]
+)
 
-    usuario_ref = db.collection("usuarios").document(email)
+
+# =========================
+# REGISTRAR LATINHA
+# =========================
+
+def registrar_latinha(
+    email,
+    pontos_por_latinha=10
+):
+
+    usuario_ref = (
+        db.collection("usuarios")
+        .document(email)
+    )
 
     usuario_ref.update({
         "latinhas": firestore.Increment(1),
-        "pontos": firestore.Increment(pontos_por_latinha)
+        "pontos": firestore.Increment(
+            pontos_por_latinha
+        )
     })
+
+
+# =========================
+# ANALISAR FOTO COM GEMINI
+# =========================
+
+def analisar_latinha_redbull(foto):
+
+    imagem_bytes = foto.getvalue()
+
+    mime_type = (
+        foto.type
+        if foto.type
+        else "image/jpeg"
+    )
+
+    imagem = types.Part.from_bytes(
+        data=imagem_bytes,
+        mime_type=mime_type
+    )
+
+    prompt = """
+Analise cuidadosamente esta imagem.
+
+Quero saber se existe uma LATA FÍSICA
+de bebida energética RED BULL
+claramente visível na imagem.
+
+Regras:
+
+- Deve ser uma lata física de Red Bull.
+- O logotipo ou identidade visual da
+  Red Bull deve estar suficientemente
+  visível para identificar a marca.
+- Não aceite apenas o logotipo isolado.
+- Não aceite garrafas.
+- Não aceite outros produtos da Red Bull.
+- Não aceite outras marcas de energético.
+- Não aceite desenhos ou ilustrações.
+- Não aceite quando não for possível
+  ter confiança de que é uma lata Red Bull.
+
+Responda SOMENTE com uma das palavras:
+
+SIM
+
+ou
+
+NAO
+"""
+
+    resposta = (
+        gemini_client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=[
+                prompt,
+                imagem
+            ]
+        )
+    )
+
+    resultado = (
+        resposta.text
+        .strip()
+        .upper()
+        .replace("Ã", "A")
+    )
+
+    return resultado.startswith("SIM")
 
 
 # =========================
@@ -86,7 +181,9 @@ def registrar_latinha(email, pontos_por_latinha=10):
 if not st.user.is_logged_in:
 
     st.markdown(
-        '<div class="titulo">🥤 RedBull Rewards</div>',
+        '<div class="titulo">'
+        '🥤 RedBull Rewards'
+        '</div>',
         unsafe_allow_html=True
     )
 
@@ -112,13 +209,23 @@ if not st.user.is_logged_in:
 # USUÁRIO AUTENTICADO
 # =========================
 
-nome = st.user.get("name", "Usuário")
-email = st.user.get("email", "")
+nome = st.user.get(
+    "name",
+    "Usuário"
+)
+
+email = st.user.get(
+    "email",
+    ""
+)
 
 if not email:
+
     st.error(
-        "Não foi possível obter o e-mail da conta Google."
+        "Não foi possível obter o e-mail "
+        "da conta Google."
     )
+
     st.stop()
 
 
@@ -126,12 +233,14 @@ if not email:
 # BUSCAR / CRIAR USUÁRIO
 # =========================
 
-usuario_ref = db.collection("usuarios").document(email)
+usuario_ref = (
+    db.collection("usuarios")
+    .document(email)
+)
 
 usuario_doc = usuario_ref.get()
 
 
-# Primeiro login
 if not usuario_doc.exists:
 
     usuario_ref.set({
@@ -148,22 +257,32 @@ else:
 
     dados = usuario_doc.to_dict()
 
-    pontos = dados.get("pontos", 0)
-    latinhas = dados.get("latinhas", 0)
+    pontos = dados.get(
+        "pontos",
+        0
+    )
+
+    latinhas = dados.get(
+        "latinhas",
+        0
+    )
 
 
 # =========================
-# INTERFACE DO USUÁRIO
+# INTERFACE
 # =========================
 
 st.markdown(
-    '<div class="titulo">🥤 RedBull Rewards</div>',
+    '<div class="titulo">'
+    '🥤 RedBull Rewards'
+    '</div>',
     unsafe_allow_html=True
 )
 
 st.markdown(
     '<div class="subtitulo">'
-    'Recicle suas latinhas e acumule pontos!'
+    'Recicle suas latinhas Red Bull '
+    'e acumule pontos!'
     '</div>',
     unsafe_allow_html=True
 )
@@ -180,79 +299,128 @@ st.markdown(
 
 
 # =========================
-# PONTOS E LATINHAS
+# PONTOS
 # =========================
 
 st.divider()
 
-st.metric(
-    label="⭐ Seus pontos",
-    value=pontos
-)
+col1, col2 = st.columns(2)
 
-st.metric(
-    label="🥤 Latinhas recicladas",
-    value=latinhas
-)
+with col1:
+
+    st.metric(
+        label="⭐ Seus pontos",
+        value=pontos
+    )
+
+with col2:
+
+    st.metric(
+        label="🥤 Latinhas",
+        value=latinhas
+    )
 
 
 # =========================
-# CÂMERA / RECICLAGEM
+# CÂMERA
 # =========================
 
-st.subheader("📸 Reciclar uma latinha")
+st.divider()
+
+st.subheader(
+    "📸 Reciclar uma Red Bull"
+)
+
+st.write(
+    "Tire uma foto mostrando claramente "
+    "a latinha Red Bull."
+)
 
 foto = st.camera_input(
-    "Tire uma foto da latinha"
+    "Tirar foto da latinha"
 )
+
+
+# =========================
+# ANALISAR FOTO
+# =========================
 
 if foto is not None:
 
-    st.image(
-        foto,
-        caption="Foto capturada"
-    )
-
     if st.button(
-        "✅ Confirmar reciclagem",
+        "🤖 Verificar latinha",
         use_container_width=True
     ):
 
-        registrar_latinha(
-            email=email,
-            pontos_por_latinha=10
-        )
+        with st.spinner(
+            "Analisando a imagem..."
+        ):
 
-        st.success(
-            "Latinha registrada! +10 pontos"
-        )
+            try:
 
-        st.rerun()
+                eh_redbull = (
+                    analisar_latinha_redbull(
+                        foto
+                    )
+                )
+
+                if eh_redbull:
+
+                    registrar_latinha(
+                        email=email,
+                        pontos_por_latinha=10
+                    )
+
+                    st.success(
+                        "✅ Latinha Red Bull "
+                        "identificada! +10 pontos"
+                    )
+
+                    st.balloons()
+
+                    st.rerun()
+
+                else:
+
+                    st.error(
+                        "❌ Não foi possível "
+                        "identificar uma latinha "
+                        "Red Bull."
+                    )
+
+                    st.warning(
+                        "Nenhum ponto foi adicionado."
+                    )
+
+            except Exception as erro:
+
+                st.error(
+                    "Ocorreu um erro ao analisar "
+                    "a imagem."
+                )
+
+                st.code(
+                    str(erro)
+                )
 
 
 # =========================
-# MENSAGEM
+# INFORMAÇÕES
 # =========================
-
-if latinhas == 0:
-
-    st.info(
-        "🥤 Recicle sua primeira latinha para começar a ganhar pontos!"
-    )
-
-else:
-
-    st.success(
-        f"🎉 Você já reciclou {latinhas} latinha(s)!"
-    )
-
 
 st.divider()
+
+st.info(
+    "🥤 Cada latinha Red Bull válida "
+    "vale 10 pontos."
+)
 
 
 # =========================
 # LOGOUT
 # =========================
+
+st.divider()
 
 if st.button(
     "🚪 Sair da conta",
