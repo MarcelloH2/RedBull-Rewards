@@ -1,5 +1,6 @@
 import streamlit as st
 import firebase_admin
+import av
 
 from firebase_admin import credentials, firestore
 from google import genai
@@ -11,9 +12,8 @@ from streamlit_webrtc import (
     VideoProcessorBase
 )
 
-from PIL import Image
+from PIL import ImageDraw
 
-import av
 import io
 import time
 import threading
@@ -63,12 +63,6 @@ st.markdown("""
     margin-bottom: 20px;
 }
 
-.status-detectando {
-    text-align: center;
-    font-size: 20px;
-    font-weight: bold;
-}
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -104,7 +98,7 @@ gemini_client = genai.Client(
 
 
 # =========================
-# FUNÇÃO GEMINI
+# VERIFICAR RED BULL
 # =========================
 
 def verificar_redbull(imagem_bytes):
@@ -146,25 +140,67 @@ ou
 NAO
 """
 
-    resposta = gemini_client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=[
-            imagem,
-            prompt
-        ]
-    )
+    tentativas = 3
 
-    if not resposta.text:
-        return False
+    for tentativa in range(tentativas):
 
-    resultado = (
-        resposta.text
-        .strip()
-        .upper()
-        .replace("Ã", "A")
-    )
+        try:
 
-    return resultado.startswith("SIM")
+            resposta = (
+                gemini_client.models.generate_content(
+                    model="gemini-3.8-flash",
+                    contents=[
+                        imagem,
+                        prompt
+                    ]
+                )
+            )
+
+            if not resposta.text:
+                return False
+
+            resultado = (
+                resposta.text
+                .strip()
+                .upper()
+                .replace("Ã", "A")
+            )
+
+            return resultado.startswith("SIM")
+
+        except Exception as erro:
+
+            mensagem = str(erro)
+
+            erro_temporario = (
+                "503" in mensagem
+                or "UNAVAILABLE" in mensagem
+                or "429" in mensagem
+                or "RESOURCE_EXHAUSTED" in mensagem
+            )
+
+            if erro_temporario:
+
+                if tentativa < tentativas - 1:
+
+                    tempo_espera = (
+                        2 ** (tentativa + 1)
+                    )
+
+                    time.sleep(
+                        tempo_espera
+                    )
+
+                    continue
+
+                raise Exception(
+                    "Gemini temporariamente "
+                    "indisponível."
+                )
+
+            raise erro
+
+    return False
 
 
 # =========================
@@ -199,17 +235,36 @@ class RedBullProcessor(VideoProcessorBase):
 
         self.email = email
 
-        self.ultima_analise = 0
+        # =========================
+        # TEMPO DA TENTATIVA
+        # =========================
+
+        self.tempo_limite = 10
+
+        self.inicio_tentativa = (
+            time.time()
+        )
+
+        self.fim_tentativa = (
+            self.inicio_tentativa
+            + self.tempo_limite
+        )
+
+        # =========================
+        # ANÁLISE
+        # =========================
 
         self.intervalo_analise = 2
 
-        self.confirmacoes = 0
-
-        self.necessarias = 2
+        self.ultima_analise = 0
 
         self.analisando = False
 
         self.redbull_detectada = False
+
+        self.confirmacoes = 0
+
+        self.confirmacoes_necessarias = 2
 
         self.pontuou = False
 
@@ -217,12 +272,22 @@ class RedBullProcessor(VideoProcessorBase):
 
         self.lock = threading.Lock()
 
-        # Depois que pontua,
-        # precisa a lata desaparecer
-        # antes de pontuar outra vez
-        self.bloqueado = False
 
-        self.frames_sem_redbull = 0
+    # =========================
+    # TEMPO RESTANTE
+    # =========================
+
+    def tempo_restante(self):
+
+        restante = (
+            self.fim_tentativa
+            - time.time()
+        )
+
+        return max(
+            0,
+            int(restante) + 1
+        )
 
 
     # =========================
@@ -242,57 +307,51 @@ class RedBullProcessor(VideoProcessorBase):
 
             with self.lock:
 
-                self.redbull_detectada = resultado
+                # Se a resposta da IA chegou
+                # depois dos 10 segundos,
+                # não vale mais.
+                if (
+                    time.time()
+                    >= self.fim_tentativa
+                ):
 
-                # =========================
-                # RED BULL DETECTADA
-                # =========================
+                    self.redbull_detectada = False
+
+                    self.confirmacoes = 0
+
+                    return
+
+                self.erro = None
+
+                self.redbull_detectada = (
+                    resultado
+                )
 
                 if resultado:
 
-                    self.frames_sem_redbull = 0
+                    self.confirmacoes += 1
 
-                    if not self.bloqueado:
+                    # =========================
+                    # LATINHA VALIDADA
+                    # =========================
 
-                        self.confirmacoes += 1
+                    if (
+                        self.confirmacoes
+                        >=
+                        self.confirmacoes_necessarias
+                        and not self.pontuou
+                    ):
 
-                        if (
-                            self.confirmacoes
-                            >= self.necessarias
-                        ):
+                        registrar_latinha(
+                            self.email,
+                            10
+                        )
 
-                            registrar_latinha(
-                                self.email,
-                                10
-                            )
-
-                            self.pontuou = True
-
-                            self.bloqueado = True
-
-                            self.confirmacoes = 0
-
-                # =========================
-                # NÃO DETECTOU
-                # =========================
+                        self.pontuou = True
 
                 else:
 
                     self.confirmacoes = 0
-
-                    self.frames_sem_redbull += 1
-
-                    # Precisa não detectar
-                    # em 2 análises
-                    # para liberar outra lata
-                    if (
-                        self.frames_sem_redbull
-                        >= 2
-                    ):
-
-                        self.bloqueado = False
-
-                        self.frames_sem_redbull = 0
 
         except Exception as erro:
 
@@ -302,69 +361,233 @@ class RedBullProcessor(VideoProcessorBase):
 
                 self.confirmacoes = 0
 
+                self.redbull_detectada = False
+
         finally:
 
             with self.lock:
+
                 self.analisando = False
 
 
     # =========================
-    # RECEBER FRAME
+    # RECEBER VÍDEO
     # =========================
 
     def recv(self, frame):
 
         agora = time.time()
 
-        # Analisa aproximadamente
-        # a cada 2 segundos
+        imagem = frame.to_image()
+
+
+        # =========================
+        # VERIFICA TEMPO
+        # =========================
+
+        tempo_restante = (
+            self.tempo_restante()
+        )
+
+
+        # =========================
+        # ANALISAR SOMENTE
+        # DURANTE OS 10 SEGUNDOS
+        # =========================
+
         if (
-            agora - self.ultima_analise
-            >= self.intervalo_analise
+            tempo_restante > 0
+            and not self.pontuou
         ):
 
-            with self.lock:
+            tempo_passado = (
+                agora
+                - self.ultima_analise
+            )
 
-                pode_analisar = (
-                    not self.analisando
-                )
+            if (
+                tempo_passado
+                >= self.intervalo_analise
+            ):
+
+                pode_analisar = False
+
+                with self.lock:
+
+                    if not self.analisando:
+
+                        self.analisando = True
+
+                        pode_analisar = True
 
                 if pode_analisar:
-                    self.analisando = True
 
-            if pode_analisar:
+                    self.ultima_analise = (
+                        agora
+                    )
 
-                self.ultima_analise = agora
+                    imagem_analise = (
+                        imagem.copy()
+                    )
 
-                imagem = frame.to_image()
+                    imagem_analise.thumbnail(
+                        (640, 640)
+                    )
 
-                # Reduz tamanho para
-                # deixar a análise mais leve
-                imagem.thumbnail(
-                    (640, 640)
-                )
+                    buffer = io.BytesIO()
 
-                buffer = io.BytesIO()
+                    imagem_analise.save(
+                        buffer,
+                        format="JPEG",
+                        quality=80
+                    )
 
-                imagem.save(
-                    buffer,
-                    format="JPEG",
-                    quality=80
-                )
+                    imagem_bytes = (
+                        buffer.getvalue()
+                    )
 
-                imagem_bytes = (
-                    buffer.getvalue()
-                )
+                    thread = (
+                        threading.Thread(
+                            target=
+                            self.analisar_frame,
 
-                thread = threading.Thread(
-                    target=self.analisar_frame,
-                    args=(imagem_bytes,),
-                    daemon=True
-                )
+                            args=(
+                                imagem_bytes,
+                            ),
 
-                thread.start()
+                            daemon=True
+                        )
+                    )
 
-        return frame
+                    thread.start()
+
+
+        # =========================
+        # TEXTO SOBRE O VÍDEO
+        # =========================
+
+        draw = ImageDraw.Draw(
+            imagem
+        )
+
+        with self.lock:
+
+            pontuou = self.pontuou
+
+            detectada = (
+                self.redbull_detectada
+            )
+
+            confirmacoes = (
+                self.confirmacoes
+            )
+
+            analisando = (
+                self.analisando
+            )
+
+            erro = self.erro
+
+
+        # =========================
+        # RESULTADO
+        # =========================
+
+        if pontuou:
+
+            texto1 = (
+                "RED BULL VALIDADA!"
+            )
+
+            texto2 = (
+                "+10 PONTOS"
+            )
+
+        elif tempo_restante <= 0:
+
+            texto1 = (
+                "TEMPO ENCERRADO"
+            )
+
+            texto2 = (
+                "Pressione STOP e START "
+                "para tentar novamente"
+            )
+
+        elif erro:
+
+            texto1 = (
+                "Erro na analise"
+            )
+
+            texto2 = (
+                "Tentando novamente..."
+            )
+
+        elif detectada:
+
+            texto1 = (
+                "RED BULL DETECTADA"
+            )
+
+            texto2 = (
+                f"Validacao "
+                f"{confirmacoes}/2"
+            )
+
+        elif analisando:
+
+            texto1 = (
+                f"Tempo: "
+                f"{tempo_restante}s"
+            )
+
+            texto2 = (
+                "Analisando..."
+            )
+
+        else:
+
+            texto1 = (
+                f"Tempo: "
+                f"{tempo_restante}s"
+            )
+
+            texto2 = (
+                "Aponte para uma Red Bull"
+            )
+
+
+        # Fundo para facilitar leitura
+        draw.rectangle(
+            (10, 10, 440, 85),
+            fill="black"
+        )
+
+        draw.text(
+            (20, 20),
+            texto1,
+            fill="white"
+        )
+
+        draw.text(
+            (20, 50),
+            texto2,
+            fill="white"
+        )
+
+
+        # =========================
+        # DEVOLVE FRAME
+        # =========================
+
+        novo_frame = (
+            av.VideoFrame.from_image(
+                imagem
+            )
+        )
+
+        return novo_frame
 
 
 # =========================
@@ -382,7 +605,8 @@ if not st.user.is_logged_in:
 
     st.markdown(
         '<div class="subtitulo">'
-        'Entre para começar a acumular pontos!'
+        'Entre para começar a '
+        'acumular pontos!'
         '</div>',
         unsafe_allow_html=True
     )
@@ -391,6 +615,7 @@ if not st.user.is_logged_in:
         "🔐 Entrar com Google",
         use_container_width=True
     ):
+
         st.login()
 
     st.stop()
@@ -421,7 +646,7 @@ if not email:
 
 
 # =========================
-# FIRESTORE - USUÁRIO
+# BUSCAR USUÁRIO
 # =========================
 
 usuario_ref = (
@@ -429,7 +654,9 @@ usuario_ref = (
     .document(email)
 )
 
-usuario_doc = usuario_ref.get()
+usuario_doc = (
+    usuario_ref.get()
+)
 
 
 if not usuario_doc.exists:
@@ -442,11 +669,14 @@ if not usuario_doc.exists:
     })
 
     pontos = 0
+
     latinhas = 0
 
 else:
 
-    dados = usuario_doc.to_dict()
+    dados = (
+        usuario_doc.to_dict()
+    )
 
     pontos = dados.get(
         "pontos",
@@ -490,12 +720,14 @@ st.markdown(
 
 
 # =========================
-# PONTOS
+# SALDO
 # =========================
 
 st.divider()
 
-col1, col2 = st.columns(2)
+col1, col2 = (
+    st.columns(2)
+)
 
 with col1:
 
@@ -513,19 +745,20 @@ with col2:
 
 
 # =========================
-# CÂMERA
+# RECICLAGEM
 # =========================
 
 st.divider()
 
 st.subheader(
-    "📹 Reciclagem em tempo real"
+    "♻️ Escanear Red Bull"
 )
 
 st.write(
-    "Aponte a câmera para uma "
-    "latinha Red Bull e mantenha "
-    "ela visível por alguns segundos."
+    "Pressione START e aponte a câmera "
+    "para a latinha. Você terá "
+    "**10 segundos** para realizar "
+    "a validação."
 )
 
 
@@ -540,7 +773,9 @@ ctx = webrtc_streamer(
     mode=WebRtcMode.SENDRECV,
 
     video_processor_factory=lambda:
-        RedBullProcessor(email),
+        RedBullProcessor(
+            email
+        ),
 
     media_stream_constraints={
         "video": {
@@ -554,86 +789,13 @@ ctx = webrtc_streamer(
 
 
 # =========================
-# STATUS
+# INFORMAÇÕES
 # =========================
-
-if ctx.video_processor:
-
-    processor = ctx.video_processor
-
-    with processor.lock:
-
-        detectada = (
-            processor.redbull_detectada
-        )
-
-        confirmacoes = (
-            processor.confirmacoes
-        )
-
-        pontuou = (
-            processor.pontuou
-        )
-
-        erro = processor.erro
-
-        analisando = (
-            processor.analisando
-        )
-
-    if erro:
-
-        st.error(
-            "Erro na análise da imagem:"
-        )
-
-        st.code(erro)
-
-    elif pontuou:
-
-        st.success(
-            "♻️ Latinha Red Bull validada!"
-        )
-
-        st.success(
-            "⭐ +10 pontos"
-        )
-
-    elif detectada:
-
-        st.success(
-            "🥤 Red Bull detectada!"
-        )
-
-        st.write(
-            f"Verificação "
-            f"{confirmacoes}/2"
-        )
-
-    elif analisando:
-
-        st.info(
-            "🔍 Analisando..."
-        )
-
-    else:
-
-        st.info(
-            "🔍 Procurando uma latinha "
-            "Red Bull..."
-        )
-
-
-# =========================
-# INFORMAÇÃO
-# =========================
-
-st.divider()
 
 st.info(
-    "🥤 Mantenha a latinha visível "
-    "por alguns segundos. "
-    "Duas confirmações são necessárias."
+    "🥤 Mantenha a Red Bull visível "
+    "durante a validação. "
+    "São necessárias duas confirmações."
 )
 
 
