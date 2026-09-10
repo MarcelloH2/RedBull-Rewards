@@ -1,6 +1,9 @@
 import streamlit as st
 import firebase_admin
 import av
+import io
+import time
+import threading
 
 from firebase_admin import credentials, firestore
 from google import genai
@@ -14,14 +17,10 @@ from streamlit_webrtc import (
 
 from PIL import ImageDraw
 
-import io
-import time
-import threading
 
-
-# =========================
+# =========================================================
 # CONFIGURAÇÃO DA PÁGINA
-# =========================
+# =========================================================
 
 st.set_page_config(
     page_title="RedBull Rewards",
@@ -30,9 +29,9 @@ st.set_page_config(
 )
 
 
-# =========================
-# ESTILO
-# =========================
+# =========================================================
+# CSS
+# =========================================================
 
 st.markdown("""
 <style>
@@ -67,9 +66,9 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
-# =========================
-# FIREBASE / FIRESTORE
-# =========================
+# =========================================================
+# FIREBASE
+# =========================================================
 
 if not firebase_admin._apps:
 
@@ -88,18 +87,18 @@ if not firebase_admin._apps:
 db = firestore.client()
 
 
-# =========================
+# =========================================================
 # GEMINI
-# =========================
+# =========================================================
 
 gemini_client = genai.Client(
     api_key=st.secrets["gemini"]["api_key"]
 )
 
 
-# =========================
-# VERIFICAR RED BULL
-# =========================
+# =========================================================
+# ANALISAR IMAGEM
+# =========================================================
 
 def verificar_redbull(imagem_bytes):
 
@@ -109,27 +108,31 @@ def verificar_redbull(imagem_bytes):
     )
 
     prompt = """
-Analise esta imagem.
+Analise cuidadosamente esta imagem.
 
 Determine se existe uma LATA FÍSICA
 da bebida energética RED BULL
-claramente visível.
+claramente visível na imagem.
 
-Considere SIM somente quando:
+Responda SIM somente se:
 
-- for realmente uma lata;
-- for claramente da marca Red Bull;
+- houver uma lata física;
+- a lata for claramente Red Bull;
+- a marca Red Bull estiver identificável;
 - a lata estiver suficientemente visível;
-- houver confiança razoável na identificação.
+- houver boa confiança na identificação.
 
-Considere NAO quando:
+Responda NAO se:
 
+- não houver lata;
+- for outra bebida;
 - for outra marca;
 - for garrafa;
-- for apenas o logotipo;
-- for desenho ou ilustração;
-- a imagem estiver ruim ou duvidosa;
-- não houver uma lata Red Bull claramente identificável.
+- for somente um logotipo;
+- for desenho;
+- for ilustração;
+- a imagem estiver muito ruim;
+- não houver certeza de que é Red Bull.
 
 Responda SOMENTE:
 
@@ -183,19 +186,18 @@ NAO
 
                 if tentativa < tentativas - 1:
 
-                    tempo_espera = (
-                        2 ** (tentativa + 1)
-                    )
+                    # 1ª falha -> espera 2s
+                    # 2ª falha -> espera 4s
+                    espera = 2 ** (tentativa + 1)
 
-                    time.sleep(
-                        tempo_espera
-                    )
+                    time.sleep(espera)
 
                     continue
 
                 raise Exception(
-                    "Gemini temporariamente "
-                    "indisponível."
+                    "O Gemini está temporariamente "
+                    "indisponível. Tente novamente "
+                    "em alguns instantes."
                 )
 
             raise erro
@@ -203,9 +205,9 @@ NAO
     return False
 
 
-# =========================
+# =========================================================
 # REGISTRAR LATINHA
-# =========================
+# =========================================================
 
 def registrar_latinha(
     email,
@@ -225,9 +227,9 @@ def registrar_latinha(
     })
 
 
-# =========================
+# =========================================================
 # PROCESSADOR DO VÍDEO
-# =========================
+# =========================================================
 
 class RedBullProcessor(VideoProcessorBase):
 
@@ -235,26 +237,24 @@ class RedBullProcessor(VideoProcessorBase):
 
         self.email = email
 
-        # =========================
-        # TEMPO DA TENTATIVA
-        # =========================
+        # -------------------------
+        # TEMPO
+        # -------------------------
 
-        self.tempo_limite = 10
+        self.tempo_limite = 15
 
-        self.inicio_tentativa = (
-            time.time()
-        )
+        self.inicio_tentativa = time.time()
 
         self.fim_tentativa = (
             self.inicio_tentativa
             + self.tempo_limite
         )
 
-        # =========================
+        # -------------------------
         # ANÁLISE
-        # =========================
+        # -------------------------
 
-        self.intervalo_analise = 2
+        self.intervalo_analise = 1.5
 
         self.ultima_analise = 0
 
@@ -273,9 +273,9 @@ class RedBullProcessor(VideoProcessorBase):
         self.lock = threading.Lock()
 
 
-    # =========================
+    # =====================================================
     # TEMPO RESTANTE
-    # =========================
+    # =====================================================
 
     def tempo_restante(self):
 
@@ -290,13 +290,14 @@ class RedBullProcessor(VideoProcessorBase):
         )
 
 
-    # =========================
+    # =====================================================
     # ANALISAR FRAME
-    # =========================
+    # =====================================================
 
     def analisar_frame(
         self,
-        imagem_bytes
+        imagem_bytes,
+        momento_captura
     ):
 
         try:
@@ -305,23 +306,25 @@ class RedBullProcessor(VideoProcessorBase):
                 imagem_bytes
             )
 
+            precisa_pontuar = False
+
             with self.lock:
 
-                # Se a resposta da IA chegou
-                # depois dos 10 segundos,
-                # não vale mais.
+                self.erro = None
+
+                # O que importa é quando
+                # a imagem foi CAPTURADA.
+                #
+                # Se a imagem foi capturada
+                # antes dos 15 segundos,
+                # a resposta ainda será aceita.
+
                 if (
-                    time.time()
-                    >= self.fim_tentativa
+                    momento_captura
+                    > self.fim_tentativa
                 ):
 
-                    self.redbull_detectada = False
-
-                    self.confirmacoes = 0
-
                     return
-
-                self.erro = None
 
                 self.redbull_detectada = (
                     resultado
@@ -331,10 +334,6 @@ class RedBullProcessor(VideoProcessorBase):
 
                     self.confirmacoes += 1
 
-                    # =========================
-                    # LATINHA VALIDADA
-                    # =========================
-
                     if (
                         self.confirmacoes
                         >=
@@ -342,16 +341,39 @@ class RedBullProcessor(VideoProcessorBase):
                         and not self.pontuou
                     ):
 
-                        registrar_latinha(
-                            self.email,
-                            10
-                        )
-
+                        # Marca primeiro para evitar
+                        # pontuação duplicada.
                         self.pontuou = True
+
+                        precisa_pontuar = True
 
                 else:
 
                     self.confirmacoes = 0
+
+
+            # Firestore fora do lock
+            # para não travar o vídeo.
+            if precisa_pontuar:
+
+                try:
+
+                    registrar_latinha(
+                        self.email,
+                        10
+                    )
+
+                except Exception as erro_firestore:
+
+                    with self.lock:
+
+                        self.pontuou = False
+
+                        self.erro = (
+                            "Erro ao registrar pontos: "
+                            + str(erro_firestore)
+                        )
+
 
         except Exception as erro:
 
@@ -359,9 +381,8 @@ class RedBullProcessor(VideoProcessorBase):
 
                 self.erro = str(erro)
 
-                self.confirmacoes = 0
-
                 self.redbull_detectada = False
+
 
         finally:
 
@@ -370,9 +391,9 @@ class RedBullProcessor(VideoProcessorBase):
                 self.analisando = False
 
 
-    # =========================
-    # RECEBER VÍDEO
-    # =========================
+    # =====================================================
+    # RECEBER FRAME
+    # =====================================================
 
     def recv(self, frame):
 
@@ -380,33 +401,27 @@ class RedBullProcessor(VideoProcessorBase):
 
         imagem = frame.to_image()
 
-
-        # =========================
-        # VERIFICA TEMPO
-        # =========================
-
         tempo_restante = (
             self.tempo_restante()
         )
 
 
-        # =========================
-        # ANALISAR SOMENTE
-        # DURANTE OS 10 SEGUNDOS
-        # =========================
+        # =================================================
+        # CAPTURAR FRAME PARA ANÁLISE
+        # =================================================
 
         if (
             tempo_restante > 0
             and not self.pontuou
         ):
 
-            tempo_passado = (
+            tempo_desde_ultima = (
                 agora
                 - self.ultima_analise
             )
 
             if (
-                tempo_passado
+                tempo_desde_ultima
                 >= self.intervalo_analise
             ):
 
@@ -420,18 +435,21 @@ class RedBullProcessor(VideoProcessorBase):
 
                         pode_analisar = True
 
+
                 if pode_analisar:
 
-                    self.ultima_analise = (
-                        agora
-                    )
+                    self.ultima_analise = agora
+
+                    momento_captura = agora
 
                     imagem_analise = (
                         imagem.copy()
                     )
 
+                    # Mantém mais detalhes
+                    # da lata.
                     imagem_analise.thumbnail(
-                        (640, 640)
+                        (768, 768)
                     )
 
                     buffer = io.BytesIO()
@@ -439,40 +457,36 @@ class RedBullProcessor(VideoProcessorBase):
                     imagem_analise.save(
                         buffer,
                         format="JPEG",
-                        quality=80
+                        quality=90
                     )
 
                     imagem_bytes = (
                         buffer.getvalue()
                     )
 
-                    thread = (
-                        threading.Thread(
-                            target=
-                            self.analisar_frame,
+                    thread = threading.Thread(
+                        target=self.analisar_frame,
 
-                            args=(
-                                imagem_bytes,
-                            ),
+                        args=(
+                            imagem_bytes,
+                            momento_captura
+                        ),
 
-                            daemon=True
-                        )
+                        daemon=True
                     )
 
                     thread.start()
 
 
-        # =========================
-        # TEXTO SOBRE O VÍDEO
-        # =========================
-
-        draw = ImageDraw.Draw(
-            imagem
-        )
+        # =================================================
+        # ESTADO ATUAL
+        # =================================================
 
         with self.lock:
 
-            pontuou = self.pontuou
+            pontuou = (
+                self.pontuou
+            )
 
             detectada = (
                 self.redbull_detectada
@@ -486,12 +500,23 @@ class RedBullProcessor(VideoProcessorBase):
                 self.analisando
             )
 
-            erro = self.erro
+            erro = (
+                self.erro
+            )
 
 
-        # =========================
-        # RESULTADO
-        # =========================
+        # =================================================
+        # TEXTO NA CÂMERA
+        # =================================================
+
+        draw = ImageDraw.Draw(
+            imagem
+        )
+
+
+        # -------------------------
+        # VALIDOU
+        # -------------------------
 
         if pontuou:
 
@@ -503,26 +528,52 @@ class RedBullProcessor(VideoProcessorBase):
                 "+10 PONTOS"
             )
 
+
+        # -------------------------
+        # ACABOU O TEMPO
+        # -------------------------
+
         elif tempo_restante <= 0:
 
-            texto1 = (
-                "TEMPO ENCERRADO"
-            )
+            if analisando:
 
-            texto2 = (
-                "Pressione STOP e START "
-                "para tentar novamente"
-            )
+                texto1 = (
+                    "AGUARDANDO ANALISE..."
+                )
+
+                texto2 = (
+                    "Processando ultima imagem"
+                )
+
+            else:
+
+                texto1 = (
+                    "TEMPO ENCERRADO"
+                )
+
+                texto2 = (
+                    "STOP e START para tentar novamente"
+                )
+
+
+        # -------------------------
+        # ERRO
+        # -------------------------
 
         elif erro:
 
             texto1 = (
-                "Erro na analise"
+                "ERRO NA ANALISE"
             )
 
             texto2 = (
                 "Tentando novamente..."
             )
+
+
+        # -------------------------
+        # DETECTOU
+        # -------------------------
 
         elif detectada:
 
@@ -535,6 +586,11 @@ class RedBullProcessor(VideoProcessorBase):
                 f"{confirmacoes}/2"
             )
 
+
+        # -------------------------
+        # GEMINI ANALISANDO
+        # -------------------------
+
         elif analisando:
 
             texto1 = (
@@ -543,8 +599,13 @@ class RedBullProcessor(VideoProcessorBase):
             )
 
             texto2 = (
-                "Analisando..."
+                "Gemini analisando..."
             )
+
+
+        # -------------------------
+        # PROCURANDO
+        # -------------------------
 
         else:
 
@@ -558,58 +619,76 @@ class RedBullProcessor(VideoProcessorBase):
             )
 
 
-        # Fundo para facilitar leitura
+        # =================================================
+        # FUNDO DO TEXTO
+        # =================================================
+
         draw.rectangle(
-            (10, 10, 440, 85),
+            (
+                10,
+                10,
+                520,
+                90
+            ),
             fill="black"
         )
 
+
         draw.text(
-            (20, 20),
+            (
+                20,
+                20
+            ),
             texto1,
             fill="white"
         )
 
+
         draw.text(
-            (20, 50),
+            (
+                20,
+                52
+            ),
             texto2,
             fill="white"
         )
 
 
-        # =========================
-        # DEVOLVE FRAME
-        # =========================
+        # =================================================
+        # DEVOLVER FRAME
+        # =================================================
 
-        novo_frame = (
-            av.VideoFrame.from_image(
-                imagem
-            )
+        return av.VideoFrame.from_image(
+            imagem
         )
 
-        return novo_frame
 
-
-# =========================
-# AUTENTICAÇÃO
-# =========================
+# =========================================================
+# LOGIN
+# =========================================================
 
 if not st.user.is_logged_in:
 
     st.markdown(
-        '<div class="titulo">'
-        '🥤 RedBull Rewards'
-        '</div>',
+        """
+        <div class="titulo">
+            🥤 RedBull Rewards
+        </div>
+        """,
         unsafe_allow_html=True
     )
 
     st.markdown(
-        '<div class="subtitulo">'
-        'Entre para começar a '
-        'acumular pontos!'
-        '</div>',
+        """
+        <div class="subtitulo">
+            Entre para começar
+            a acumular pontos!
+        </div>
+        """,
         unsafe_allow_html=True
     )
+
+    st.write("")
 
     if st.button(
         "🔐 Entrar com Google",
@@ -621,9 +700,9 @@ if not st.user.is_logged_in:
     st.stop()
 
 
-# =========================
-# USUÁRIO
-# =========================
+# =========================================================
+# DADOS DO USUÁRIO
+# =========================================================
 
 nome = st.user.get(
     "name",
@@ -645,9 +724,9 @@ if not email:
     st.stop()
 
 
-# =========================
-# BUSCAR USUÁRIO
-# =========================
+# =========================================================
+# FIRESTORE - USUÁRIO
+# =========================================================
 
 usuario_ref = (
     db.collection("usuarios")
@@ -672,6 +751,7 @@ if not usuario_doc.exists:
 
     latinhas = 0
 
+
 else:
 
     dados = (
@@ -689,64 +769,75 @@ else:
     )
 
 
-# =========================
-# INTERFACE
-# =========================
+# =========================================================
+# CABEÇALHO
+# =========================================================
 
 st.markdown(
-    '<div class="titulo">'
-    '🥤 RedBull Rewards'
-    '</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    '<div class="subtitulo">'
-    'Recicle suas latinhas Red Bull '
-    'e acumule pontos!'
-    '</div>',
-    unsafe_allow_html=True
-)
-
-st.markdown(
-    f"""
-    <div class="usuario">
-        👋 Olá, <b>{nome}</b><br>
-        {email}
+    """
+    <div class="titulo">
+        🥤 RedBull Rewards
     </div>
     """,
     unsafe_allow_html=True
 )
 
 
-# =========================
-# SALDO
-# =========================
+st.markdown(
+    """
+    <div class="subtitulo">
+        Recicle suas latinhas Red Bull
+        e acumule pontos!
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+st.markdown(
+    f"""
+    <div class="usuario">
+
+        👋 Olá, <b>{nome}</b>
+
+        <br>
+
+        {email}
+
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+
+# =========================================================
+# PONTOS
+# =========================================================
 
 st.divider()
 
-col1, col2 = (
-    st.columns(2)
-)
+col1, col2 = st.columns(2)
+
 
 with col1:
 
     st.metric(
-        "⭐ Seus pontos",
-        pontos
+        label="⭐ Seus pontos",
+        value=pontos
     )
+
 
 with col2:
 
     st.metric(
-        "🥤 Latinhas",
-        latinhas
+        label="🥤 Latinhas",
+        value=latinhas
     )
 
 
-# =========================
+# =========================================================
 # RECICLAGEM
-# =========================
+# =========================================================
 
 st.divider()
 
@@ -754,17 +845,25 @@ st.subheader(
     "♻️ Escanear Red Bull"
 )
 
+
 st.write(
-    "Pressione START e aponte a câmera "
-    "para a latinha. Você terá "
-    "**10 segundos** para realizar "
-    "a validação."
+    "Pressione **START** e aponte "
+    "a câmera para a latinha. "
+    "Você terá **15 segundos** "
+    "para realizar a validação."
 )
 
 
-# =========================
+st.write(
+    "Tente deixar a lata relativamente "
+    "perto da câmera, com o nome e o "
+    "logotipo da Red Bull visíveis."
+)
+
+
+# =========================================================
 # WEBRTC
-# =========================
+# =========================================================
 
 ctx = webrtc_streamer(
 
@@ -788,20 +887,20 @@ ctx = webrtc_streamer(
 )
 
 
-# =========================
-# INFORMAÇÕES
-# =========================
+# =========================================================
+# INFORMAÇÃO
+# =========================================================
 
 st.info(
-    "🥤 Mantenha a Red Bull visível "
-    "durante a validação. "
-    "São necessárias duas confirmações."
+    "🥤 São necessárias duas "
+    "confirmações da Red Bull "
+    "para receber 10 pontos."
 )
 
 
-# =========================
+# =========================================================
 # ATUALIZAR SALDO
-# =========================
+# =========================================================
 
 if st.button(
     "🔄 Atualizar saldo",
@@ -811,9 +910,9 @@ if st.button(
     st.rerun()
 
 
-# =========================
+# =========================================================
 # LOGOUT
-# =========================
+# =========================================================
 
 st.divider()
 
