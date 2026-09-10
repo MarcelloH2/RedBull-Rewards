@@ -66,6 +66,20 @@ db = firestore.client()
 
 
 # =========================
+# FUNÇÃO PARA REGISTRAR LATINHA
+# =========================
+
+def registrar_latinha(email, pontos_por_latinha=10):
+
+    usuario_ref = db.collection("usuarios").document(email)
+
+    usuario_ref.update({
+        "latinhas": firestore.Increment(1),
+        "pontos": firestore.Increment(pontos_por_latinha)
+    })
+
+
+# =========================
 # AUTENTICAÇÃO
 # =========================
 
@@ -101,7 +115,6 @@ if not st.user.is_logged_in:
 nome = st.user.get("name", "Usuário")
 email = st.user.get("email", "")
 
-# Verifica se o Google retornou um e-mail
 if not email:
     st.error(
         "Não foi possível obter o e-mail da conta Google."
@@ -117,6 +130,7 @@ usuario_ref = db.collection("usuarios").document(email)
 
 usuario_doc = usuario_ref.get()
 
+
 # Primeiro login
 if not usuario_doc.exists:
 
@@ -130,7 +144,6 @@ if not usuario_doc.exists:
     pontos = 0
     latinhas = 0
 
-# Usuário já existente
 else:
 
     dados = usuario_doc.to_dict()
@@ -167,7 +180,7 @@ st.markdown(
 
 
 # =========================
-# PONTOS
+# PONTOS E LATINHAS
 # =========================
 
 st.divider()
@@ -182,14 +195,44 @@ st.metric(
     value=latinhas
 )
 
+
+# =========================
+# BOTÃO DE TESTE
+# =========================
+
+if st.button(
+    "🥤 Testar reciclagem de 1 latinha",
+    use_container_width=True
+):
+
+    registrar_latinha(
+        email=email,
+        pontos_por_latinha=10
+    )
+
+    st.success(
+        "Latinha registrada! +10 pontos"
+    )
+
+    st.rerun()
+
+
+# =========================
+# MENSAGEM
+# =========================
+
 if latinhas == 0:
+
     st.info(
         "🥤 Recicle sua primeira latinha para começar a ganhar pontos!"
     )
+
 else:
+
     st.success(
         f"🎉 Você já reciclou {latinhas} latinha(s)!"
     )
+
 
 st.divider()
 
