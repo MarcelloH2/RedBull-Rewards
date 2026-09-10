@@ -2,7 +2,7 @@ import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, firestore
 from google import genai
-from google.genai import types
+from streamlit_webrtc import webrtc_streamer, WebRtcMode
 
 
 # =========================
@@ -58,7 +58,6 @@ st.markdown("""
 # =========================
 
 if not firebase_admin._apps:
-
     firebase_config = dict(
         st.secrets["firebase"]
     )
@@ -103,75 +102,6 @@ def registrar_latinha(
             pontos_por_latinha
         )
     })
-
-
-# =========================
-# ANALISAR FOTO COM GEMINI
-# =========================
-
-def analisar_latinha_redbull(foto):
-
-    imagem_bytes = foto.getvalue()
-
-    mime_type = (
-        foto.type
-        if foto.type
-        else "image/jpeg"
-    )
-
-    imagem = types.Part.from_bytes(
-        data=imagem_bytes,
-        mime_type=mime_type
-    )
-
-    prompt = """
-Analise cuidadosamente esta imagem.
-
-Quero saber se existe uma LATA FÍSICA
-de bebida energética RED BULL
-claramente visível na imagem.
-
-Regras:
-
-- Deve ser uma lata física de Red Bull.
-- O logotipo ou identidade visual da
-  Red Bull deve estar suficientemente
-  visível para identificar a marca.
-- Não aceite apenas o logotipo isolado.
-- Não aceite garrafas.
-- Não aceite outros produtos da Red Bull.
-- Não aceite outras marcas de energético.
-- Não aceite desenhos ou ilustrações.
-- Não aceite quando não for possível
-  ter confiança de que é uma lata Red Bull.
-
-Responda SOMENTE com uma das palavras:
-
-SIM
-
-ou
-
-NAO
-"""
-
-    resposta = (
-        gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[
-                prompt,
-                imagem
-            ]
-        )
-    )
-
-    resultado = (
-        resposta.text
-        .strip()
-        .upper()
-        .replace("Ã", "A")
-    )
-
-    return resultado.startswith("SIM")
 
 
 # =========================
@@ -322,86 +252,30 @@ with col2:
 
 
 # =========================
-# CÂMERA
+# CÂMERA EM TEMPO REAL
 # =========================
 
 st.divider()
 
 st.subheader(
-    "📸 Reciclar uma Red Bull"
+    "📹 Reciclagem em tempo real"
 )
 
 st.write(
-    "Tire uma foto mostrando claramente "
-    "a latinha Red Bull."
+    "Aponte a câmera para uma latinha Red Bull."
 )
 
-foto = st.camera_input(
-    "Tirar foto da latinha"
+webrtc_streamer(
+    key="camera-redbull",
+    mode=WebRtcMode.SENDRECV,
+    media_stream_constraints={
+        "video": {
+            "facingMode": "environment"
+        },
+        "audio": False
+    },
+    async_processing=True
 )
-
-
-# =========================
-# ANALISAR FOTO
-# =========================
-
-if foto is not None:
-
-    if st.button(
-        "🤖 Verificar latinha",
-        use_container_width=True
-    ):
-
-        with st.spinner(
-            "Analisando a imagem..."
-        ):
-
-            try:
-
-                eh_redbull = (
-                    analisar_latinha_redbull(
-                        foto
-                    )
-                )
-
-                if eh_redbull:
-
-                    registrar_latinha(
-                        email=email,
-                        pontos_por_latinha=10
-                    )
-
-                    st.success(
-                        "✅ Latinha Red Bull "
-                        "identificada! +10 pontos"
-                    )
-
-                    st.balloons()
-
-                    st.rerun()
-
-                else:
-
-                    st.error(
-                        "❌ Não foi possível "
-                        "identificar uma latinha "
-                        "Red Bull."
-                    )
-
-                    st.warning(
-                        "Nenhum ponto foi adicionado."
-                    )
-
-            except Exception as erro:
-
-                st.error(
-                    "Ocorreu um erro ao analisar "
-                    "a imagem."
-                )
-
-                st.code(
-                    str(erro)
-                )
 
 
 # =========================
