@@ -1,4 +1,7 @@
 import streamlit as st
+import firebase_admin
+from firebase_admin import credentials, firestore
+
 
 # =========================
 # CONFIGURAÇÃO DA PÁGINA
@@ -9,6 +12,7 @@ st.set_page_config(
     page_icon="🥤",
     layout="centered"
 )
+
 
 # =========================
 # ESTILO
@@ -46,6 +50,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+
+# =========================
+# FIREBASE / FIRESTORE
+# =========================
+
+if not firebase_admin._apps:
+    firebase_config = dict(st.secrets["firebase"])
+
+    cred = credentials.Certificate(firebase_config)
+
+    firebase_admin.initialize_app(cred)
+
+db = firestore.client()
+
+
 # =========================
 # AUTENTICAÇÃO
 # =========================
@@ -79,6 +98,51 @@ if not st.user.is_logged_in:
 # USUÁRIO AUTENTICADO
 # =========================
 
+nome = st.user.get("name", "Usuário")
+email = st.user.get("email", "")
+
+# Verifica se o Google retornou um e-mail
+if not email:
+    st.error(
+        "Não foi possível obter o e-mail da conta Google."
+    )
+    st.stop()
+
+
+# =========================
+# BUSCAR / CRIAR USUÁRIO
+# =========================
+
+usuario_ref = db.collection("usuarios").document(email)
+
+usuario_doc = usuario_ref.get()
+
+# Primeiro login
+if not usuario_doc.exists:
+
+    usuario_ref.set({
+        "nome": nome,
+        "email": email,
+        "pontos": 0,
+        "latinhas": 0
+    })
+
+    pontos = 0
+    latinhas = 0
+
+# Usuário já existente
+else:
+
+    dados = usuario_doc.to_dict()
+
+    pontos = dados.get("pontos", 0)
+    latinhas = dados.get("latinhas", 0)
+
+
+# =========================
+# INTERFACE DO USUÁRIO
+# =========================
+
 st.markdown(
     '<div class="titulo">🥤 RedBull Rewards</div>',
     unsafe_allow_html=True
@@ -91,9 +155,6 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-nome = st.user.get("name", "Usuário")
-email = st.user.get("email", "")
-
 st.markdown(
     f"""
     <div class="usuario">
@@ -104,22 +165,34 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+
 # =========================
-# PONTOS - TESTE
+# PONTOS
 # =========================
 
 st.divider()
 
 st.metric(
     label="⭐ Seus pontos",
-    value="0"
+    value=pontos
 )
 
-st.info(
-    "🥤 Recicle sua primeira latinha para começar a ganhar pontos!"
+st.metric(
+    label="🥤 Latinhas recicladas",
+    value=latinhas
 )
+
+if latinhas == 0:
+    st.info(
+        "🥤 Recicle sua primeira latinha para começar a ganhar pontos!"
+    )
+else:
+    st.success(
+        f"🎉 Você já reciclou {latinhas} latinha(s)!"
+    )
 
 st.divider()
+
 
 # =========================
 # LOGOUT
