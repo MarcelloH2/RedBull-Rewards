@@ -197,24 +197,37 @@ st.metric(
 
 
 # =========================
-# BOTÃO DE TESTE
+# CÂMERA / RECICLAGEM
 # =========================
 
-if st.button(
-    "🥤 Testar reciclagem de 1 latinha",
-    use_container_width=True
-):
+st.subheader("📸 Reciclar uma latinha")
 
-    registrar_latinha(
-        email=email,
-        pontos_por_latinha=10
+foto = st.camera_input(
+    "Tire uma foto da latinha"
+)
+
+if foto is not None:
+
+    st.image(
+        foto,
+        caption="Foto capturada"
     )
 
-    st.success(
-        "Latinha registrada! +10 pontos"
-    )
+    if st.button(
+        "✅ Confirmar reciclagem",
+        use_container_width=True
+    ):
 
-    st.rerun()
+        registrar_latinha(
+            email=email,
+            pontos_por_latinha=10
+        )
+
+        st.success(
+            "Latinha registrada! +10 pontos"
+        )
+
+        st.rerun()
 
 
 # =========================
